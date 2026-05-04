@@ -1,11 +1,14 @@
 package com.plainpuffin.splitter
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -41,6 +44,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -134,6 +139,7 @@ private fun SplitterApp(preferences: SharedPreferences) {
     var paidByPersonId by remember { mutableStateOf(people.firstOrNull()?.id.orEmpty()) }
     var selectedParticipantIds by remember { mutableStateOf(people.map { it.id }.toSet()) }
     var customShareInputs by remember { mutableStateOf(people.associate { it.id to "" }) }
+    var editingExpenseId by remember { mutableStateOf<String?>(null) }
 
     fun persistCore(updatedGroupName: String = groupName, updatedPeople: List<Person> = people, updatedExpenses: List<Expense> = expenses) {
         groupName = updatedGroupName
@@ -186,6 +192,7 @@ private fun SplitterApp(preferences: SharedPreferences) {
     }
 
     fun clearDraft() {
+        editingExpenseId = null
         expenseTitle = ""
         amountInput = ""
         noteInput = ""
@@ -197,7 +204,24 @@ private fun SplitterApp(preferences: SharedPreferences) {
         }
     }
 
-    fun addExpense() {
+    fun startEditingExpense(expense: Expense) {
+        editingExpenseId = expense.id
+        expenseTitle = expense.title
+        amountInput = formatEditableMoney(expense.amountCents)
+        noteInput = expense.note
+        splitMode = expense.splitMode
+        paidByPersonId = expense.paidByPersonId
+        selectedParticipantIds = expense.participantIds.toSet()
+        customShareInputs = people.associate { person ->
+            person.id to if (expense.splitMode == SplitMode.CUSTOM) {
+                expense.customSharesCents[person.id]?.takeIf { it > 0L }?.let(::formatEditableMoney).orEmpty()
+            } else {
+                ""
+            }
+        }
+    }
+
+    fun submitExpense() {
         val amountCents = parseMoneyToCents(amountInput)
         if (amountCents <= 0L) {
             Toast.makeText(context, "Enter a valid amount.", Toast.LENGTH_SHORT).show()
@@ -225,8 +249,9 @@ private fun SplitterApp(preferences: SharedPreferences) {
             emptyMap()
         }
 
+        val existingExpenseId = editingExpenseId
         val expense = Expense(
-            id = UUID.randomUUID().toString(),
+            id = existingExpenseId ?: UUID.randomUUID().toString(),
             title = expenseTitle.trim().ifBlank { "Expense" },
             amountCents = amountCents,
             paidByPersonId = paidByPersonId,
@@ -236,13 +261,44 @@ private fun SplitterApp(preferences: SharedPreferences) {
             note = noteInput.trim()
         )
 
-        persistCore(updatedExpenses = expenses + expense)
+        val updatedExpenses = if (existingExpenseId == null) {
+            expenses + expense
+        } else if (expenses.any { it.id == existingExpenseId }) {
+            expenses.map { if (it.id == existingExpenseId) expense else it }
+        } else {
+            expenses + expense
+        }
+
+        persistCore(updatedExpenses = updatedExpenses)
         clearDraft()
-        Toast.makeText(context, "Expense added.", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, if (existingExpenseId == null) "Expense added." else "Expense updated.", Toast.LENGTH_SHORT).show()
     }
 
     val balances = remember(people, expenses) { computeBalances(people, expenses) }
     val settlements = remember(people, balances) { computeSettlements(balances) }
+    val totalDraftAmountCents = parseMoneyToCents(amountInput)
+    val customShareDeltaCents = if (splitMode == SplitMode.CUSTOM) {
+        totalDraftAmountCents - selectedParticipantIds.sumOf { personId ->
+            parseMoneyToCents(customShareInputs[personId].orEmpty())
+        }
+    } else {
+        0L
+    }
+    val customShareStatus = when {
+        splitMode != SplitMode.CUSTOM -> null
+        totalDraftAmountCents <= 0L -> "Enter the expense total first to guide the custom split."
+        customShareDeltaCents == 0L -> "Custom split matches the expense total."
+        customShareDeltaCents > 0L -> "Remaining ${formatMoney(customShareDeltaCents)} to assign."
+        else -> "Over by ${formatMoney(-customShareDeltaCents)}."
+    }
+    val customShareStatusColor = when {
+        splitMode != SplitMode.CUSTOM -> SplitterPalette.Subtle
+        totalDraftAmountCents <= 0L -> SplitterPalette.Subtle
+        customShareDeltaCents == 0L -> SplitterPalette.Accent
+        customShareDeltaCents > 0L -> SplitterPalette.Highlight
+        else -> SplitterPalette.Danger
+    }
+    val settlementSummary = remember(groupName, people, settlements) { buildSettlementSummary(groupName, people, settlements) }
 
     Column(
         modifier = Modifier
@@ -277,6 +333,7 @@ private fun SplitterApp(preferences: SharedPreferences) {
             noteInput = noteInput,
             paidByPersonId = paidByPersonId,
             splitMode = splitMode,
+            isEditing = editingExpenseId != null,
             selectedParticipantIds = selectedParticipantIds,
             customShareInputs = customShareInputs,
             onTitleChange = { expenseTitle = sanitizeTitleInput(it) },
@@ -285,8 +342,13 @@ private fun SplitterApp(preferences: SharedPreferences) {
             onPaidByChange = { paidByPersonId = it },
             onSplitModeChange = { splitMode = it },
             onToggleParticipant = ::toggleParticipant,
+            onSelectAllParticipants = { selectedParticipantIds = people.map { it.id }.toSet() },
+            onClearParticipants = { selectedParticipantIds = emptySet() },
             onCustomShareChange = { personId, value -> customShareInputs = customShareInputs + (personId to sanitizeMoneyInput(value)) },
-            onAddExpense = ::addExpense
+            customShareStatus = customShareStatus,
+            customShareStatusColor = customShareStatusColor,
+            onSubmitExpense = ::submitExpense,
+            onCancelEditing = ::clearDraft
         )
 
         BalancesPanel(people = people, balances = balances, settlements = settlements)
@@ -294,16 +356,29 @@ private fun SplitterApp(preferences: SharedPreferences) {
         ExpensesPanel(
             people = people,
             expenses = expenses,
+            onEditExpense = ::startEditingExpense,
             onDeleteExpense = { expenseId ->
                 persistCore(updatedExpenses = expenses.filterNot { it.id == expenseId })
+                if (editingExpenseId == expenseId) {
+                    clearDraft()
+                }
                 Toast.makeText(context, "Expense removed.", Toast.LENGTH_SHORT).show()
             }
         )
 
         ActionPanel(
             hasExpenses = expenses.isNotEmpty(),
+            hasSettlements = settlements.isNotEmpty(),
+            isEditing = editingExpenseId != null,
+            onCopySettlementSummary = {
+                val clipboard = context.getSystemService(ClipboardManager::class.java)
+                clipboard?.setPrimaryClip(ClipData.newPlainText("Splitter settle-up", settlementSummary))
+                Toast.makeText(context, "Settle-up summary copied.", Toast.LENGTH_SHORT).show()
+            },
+            onCancelEditing = ::clearDraft,
             onClearExpenses = {
                 persistCore(updatedExpenses = emptyList())
+                clearDraft()
                 Toast.makeText(context, "All expenses cleared.", Toast.LENGTH_SHORT).show()
             }
         )
@@ -314,8 +389,17 @@ private fun SplitterApp(preferences: SharedPreferences) {
 private fun HeaderPanel(groupName: String, onGroupNameChange: (String) -> Unit) {
     PixelPanel {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(text = "Splitter", style = titleStyle(), color = SplitterPalette.Text)
-            Text(text = "Local-first expense sharing", style = bodyStyle(), color = SplitterPalette.Subtle)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SplitterMarkIcon()
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(text = "Splitter", style = titleStyle(), color = SplitterPalette.Text)
+                    Text(text = "Local-first expense sharing", style = bodyStyle(), color = SplitterPalette.Subtle)
+                }
+            }
             StyledTextField(
                 value = groupName,
                 placeholder = "Group name",
@@ -388,6 +472,7 @@ private fun AddExpensePanel(
     noteInput: String,
     paidByPersonId: String,
     splitMode: SplitMode,
+    isEditing: Boolean,
     selectedParticipantIds: Set<String>,
     customShareInputs: Map<String, String>,
     onTitleChange: (String) -> Unit,
@@ -396,12 +481,17 @@ private fun AddExpensePanel(
     onPaidByChange: (String) -> Unit,
     onSplitModeChange: (SplitMode) -> Unit,
     onToggleParticipant: (String, Boolean) -> Unit,
+    onSelectAllParticipants: () -> Unit,
+    onClearParticipants: () -> Unit,
     onCustomShareChange: (String, String) -> Unit,
-    onAddExpense: () -> Unit
+    customShareStatus: String?,
+    customShareStatusColor: Color,
+    onSubmitExpense: () -> Unit,
+    onCancelEditing: () -> Unit
 ) {
     PixelPanel {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(text = "ADD EXPENSE", style = labelStyle(), color = SplitterPalette.Highlight)
+            Text(text = if (isEditing) "EDIT EXPENSE" else "ADD EXPENSE", style = labelStyle(), color = SplitterPalette.Highlight)
             StyledTextField(value = expenseTitle, placeholder = "Dinner, rent, groceries...", onValueChange = onTitleChange)
             StyledTextField(value = amountInput, placeholder = "0", suffix = "kr", onValueChange = onAmountChange)
             StyledTextField(value = noteInput, placeholder = "Optional note", onValueChange = onNoteChange)
@@ -424,6 +514,10 @@ private fun AddExpensePanel(
             }
 
             Text(text = "PARTICIPANTS", style = labelStyle(), color = SplitterPalette.Highlight)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SmallButton(text = "All", accent = SplitterPalette.PanelAlt, onClick = onSelectAllParticipants)
+                SmallButton(text = "Clear", accent = SplitterPalette.PanelAlt, onClick = onClearParticipants)
+            }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 people.forEach { person ->
                     Row(
@@ -460,13 +554,16 @@ private fun AddExpensePanel(
 
             if (splitMode == SplitMode.CUSTOM) {
                 Text(
-                    text = "Custom mode requires participant shares to add up exactly to the expense total.",
+                    text = customShareStatus ?: "Custom mode requires participant shares to add up exactly to the expense total.",
                     style = metaStyle(),
-                    color = SplitterPalette.Subtle
+                    color = customShareStatusColor
                 )
             }
 
-            PrimaryButton(text = "Add expense", onClick = onAddExpense)
+            if (isEditing) {
+                PrimaryButton(text = "Cancel editing", onClick = onCancelEditing, accent = SplitterPalette.PanelAlt)
+            }
+            PrimaryButton(text = if (isEditing) "Save changes" else "Add expense", onClick = onSubmitExpense)
         }
     }
 }
@@ -527,6 +624,7 @@ private fun BalancesPanel(
 private fun ExpensesPanel(
     people: List<Person>,
     expenses: List<Expense>,
+    onEditExpense: (Expense) -> Unit,
     onDeleteExpense: (String) -> Unit
 ) {
     PixelPanel {
@@ -562,7 +660,10 @@ private fun ExpensesPanel(
                         if (expense.note.isNotBlank()) {
                             Text(text = expense.note, style = metaStyle(), color = SplitterPalette.Subtle)
                         }
-                        SmallButton(text = "Delete", accent = SplitterPalette.Danger, onClick = { onDeleteExpense(expense.id) })
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SmallButton(text = "Edit", accent = SplitterPalette.Highlight, onClick = { onEditExpense(expense) })
+                            SmallButton(text = "Delete", accent = SplitterPalette.Danger, onClick = { onDeleteExpense(expense.id) })
+                        }
                     }
                 }
             }
@@ -571,10 +672,30 @@ private fun ExpensesPanel(
 }
 
 @Composable
-private fun ActionPanel(hasExpenses: Boolean, onClearExpenses: () -> Unit) {
+private fun ActionPanel(
+    hasExpenses: Boolean,
+    hasSettlements: Boolean,
+    isEditing: Boolean,
+    onCopySettlementSummary: () -> Unit,
+    onCancelEditing: () -> Unit,
+    onClearExpenses: () -> Unit
+) {
     PixelPanel {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(text = "CONTROLS", style = labelStyle(), color = SplitterPalette.Highlight)
+            PrimaryButton(
+                text = "Copy settle-up summary",
+                onClick = onCopySettlementSummary,
+                accent = SplitterPalette.Highlight,
+                enabled = hasSettlements
+            )
+            if (isEditing) {
+                PrimaryButton(
+                    text = "Cancel editing",
+                    onClick = onCancelEditing,
+                    accent = SplitterPalette.PanelAlt
+                )
+            }
             PrimaryButton(
                 text = "Clear all expenses",
                 onClick = onClearExpenses,
@@ -582,6 +703,25 @@ private fun ActionPanel(hasExpenses: Boolean, onClearExpenses: () -> Unit) {
                 enabled = hasExpenses
             )
         }
+    }
+}
+
+@Composable
+private fun SplitterMarkIcon(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(72.dp)
+            .border(2.dp, SplitterPalette.Border, RoundedCornerShape(10.dp))
+            .background(SplitterPalette.PanelAlt, RoundedCornerShape(10.dp))
+            .padding(6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.logo_splitter),
+            contentDescription = "Splitter icon",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Fit
+        )
     }
 }
 
@@ -854,6 +994,35 @@ private fun formatMoney(cents: Long): String {
         String.format(Locale.US, "%d kr", cents / 100L)
     } else {
         String.format(Locale.US, "%.2f kr", amount)
+    }
+}
+
+private fun formatEditableMoney(cents: Long): String {
+    return if (cents % 100L == 0L) {
+        (cents / 100L).toString()
+    } else {
+        String.format(Locale.US, "%.2f", cents / 100.0)
+    }
+}
+
+private fun buildSettlementSummary(groupName: String, people: List<Person>, settlements: List<Settlement>): String {
+    val safeGroupName = groupName.ifBlank { "Splitter group" }
+    if (settlements.isEmpty()) {
+        return "$safeGroupName is settled."
+    }
+    return buildString {
+        append(safeGroupName)
+        append('\n')
+        settlements.forEachIndexed { index, settlement ->
+            val fromName = people.firstOrNull { it.id == settlement.fromPersonId }?.name.orEmpty().ifBlank { "Someone" }
+            val toName = people.firstOrNull { it.id == settlement.toPersonId }?.name.orEmpty().ifBlank { "Someone" }
+            append(fromName)
+            append(" pays ")
+            append(toName)
+            append(' ')
+            append(formatMoney(settlement.amountCents))
+            if (index != settlements.lastIndex) append('\n')
+        }
     }
 }
 

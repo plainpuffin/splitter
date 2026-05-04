@@ -19,8 +19,12 @@ This repo now contains a first native Android MVP with:
 - expense entry with payer selection
 - equal split mode
 - custom exact-amount split mode
+- live custom-split remainder feedback while editing
+- quick participant select-all / clear controls
+- existing expense editing and deletion
 - running balances per person
 - settle-up suggestions
+- one-tap settle-up summary copy
 - local persistence using SharedPreferences
 - GitHub Actions debug APK build and prerelease publishing
 
@@ -76,9 +80,10 @@ If you have Java and Android tooling locally:
 3. Enter an expense title and amount.
 4. Choose who paid.
 5. Choose equal split or custom split.
-6. Add the expense.
+6. Add the expense, or edit an existing one if you need to fix it.
 7. Review balances and settle-up suggestions below.
-8. Delete mistakes or clear all expenses when the group is settled.
+8. Copy the settle-up summary when you want to send the result elsewhere.
+9. Delete mistakes or clear all expenses when the group is settled.
 
 ## GitHub debug APK workflow
 
@@ -110,6 +115,7 @@ Because this container does not currently have Java/Android SDK installed, local
 - no cloud sync or multi-device sharing
 - no recurring expenses, categories, receipts, or history filters yet
 - custom split mode currently uses exact amounts, not weights or percentages
+- no dedicated export file format yet beyond copy-to-clipboard settle-up text
 - visual QA still needs an Android device pass
 
 ## Fresh-machine restart notes

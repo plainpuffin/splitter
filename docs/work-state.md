@@ -1,10 +1,10 @@
 # splitter work state
 
-Last updated: 2026-04-27 20:14 UTC
+Last updated: 2026-05-04 19:19 UTC
 
 ## Current status
 
-In progress. Initial offline Android MVP is scaffolded and implemented locally, and the next step is GitHub build/release verification.
+In progress. The offline Android MVP is in place locally with the first polish pass completed, and the next step is GitHub build/release verification.
 
 ## What is done
 
@@ -14,9 +14,14 @@ In progress. Initial offline Android MVP is scaffolded and implemented locally, 
 - implemented local expense entry with payer selection
 - implemented equal split mode
 - implemented custom exact-amount split mode
+- implemented expense editing for common mistake recovery
+- implemented live custom-split remainder feedback
+- implemented quick participant select-all / clear actions
 - implemented running balances and settle-up suggestions
+- implemented settle-up summary copy-to-clipboard
 - implemented local persistence for group, members, and expenses
 - prepared GitHub Actions debug APK release workflow with a suitable APK asset name
+- refreshed the launcher and in-app icon treatment
 - documented assumptions, setup, and continuation state
 
 ## What is not done
@@ -24,7 +29,7 @@ In progress. Initial offline Android MVP is scaffolded and implemented locally, 
 - first GitHub Actions compile verification for this new repo
 - first prerelease APK publication for Splitter
 - real-device visual QA
-- richer features like categories, recurring items, receipt attachments, weights/percent splits, or export
+- richer features like categories, recurring items, receipt attachments, weights/percent splits, or file export
 
 ## Current blocker
 
@@ -32,16 +37,15 @@ This container still lacks Java/Android SDK tooling, so local APK builds are blo
 
 ## What changed this pass
 
-- created the new `splitter` project from a clean Android baseline
-- replaced the old calculator domain with a local expense-sharing model
-- added durable project docs and tickets
-- prepared the repo for GitHub push/build/release
+- added common fix-up and sharing affordances, especially expense editing and copyable settle-up output
+- tightened the custom split workflow with live feedback and participant quick actions
+- refreshed the branding with a new Splitter icon for launcher and in-app use
 
 ## Verification
 
 - project files created locally
 - no local Java/Gradle verification available in this container
-- next verification step is GitHub Actions after first push
+- next verification step is GitHub Actions after push
 
 ## Next wake instruction
 
