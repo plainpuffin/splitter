@@ -9,6 +9,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -64,6 +65,7 @@ private const val PREFS_NAME = "splitter_preferences"
 private const val KEY_GROUP_NAME = "group_name"
 private const val KEY_PEOPLE = "people"
 private const val KEY_EXPENSES = "expenses"
+private const val KEY_SETTLEMENT_ENTRIES = "settlement_entries"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -105,6 +107,14 @@ data class Settlement(
     val amountCents: Long
 )
 
+data class SettlementEntry(
+    val id: String,
+    val fromPersonId: String,
+    val toPersonId: String,
+    val amountCents: Long,
+    val note: String = ""
+)
+
 private object SplitterPalette {
     val Background = Color(0xFF0B1020)
     val Panel = Color(0xFF121A2B)
@@ -131,6 +141,7 @@ private fun SplitterApp(preferences: SharedPreferences) {
     var groupName by remember { mutableStateOf(preferences.getString(KEY_GROUP_NAME, "Apartment group") ?: "Apartment group") }
     var people by remember { mutableStateOf(loadPeople(preferences)) }
     var expenses by remember { mutableStateOf(loadExpenses(preferences)) }
+    var settlementEntries by remember { mutableStateOf(loadSettlementEntries(preferences)) }
 
     var expenseTitle by remember { mutableStateOf("") }
     var amountInput by remember { mutableStateOf("") }
@@ -140,15 +151,26 @@ private fun SplitterApp(preferences: SharedPreferences) {
     var selectedParticipantIds by remember { mutableStateOf(people.map { it.id }.toSet()) }
     var customShareInputs by remember { mutableStateOf(people.associate { it.id to "" }) }
     var editingExpenseId by remember { mutableStateOf<String?>(null) }
+    var settleFromPersonId by remember { mutableStateOf(people.firstOrNull()?.id.orEmpty()) }
+    var settleToPersonId by remember { mutableStateOf(people.getOrNull(1)?.id ?: people.firstOrNull()?.id.orEmpty()) }
+    var settleAmountInput by remember { mutableStateOf("") }
+    var settleNoteInput by remember { mutableStateOf("") }
 
-    fun persistCore(updatedGroupName: String = groupName, updatedPeople: List<Person> = people, updatedExpenses: List<Expense> = expenses) {
+    fun persistCore(
+        updatedGroupName: String = groupName,
+        updatedPeople: List<Person> = people,
+        updatedExpenses: List<Expense> = expenses,
+        updatedSettlementEntries: List<SettlementEntry> = settlementEntries
+    ) {
         groupName = updatedGroupName
         people = updatedPeople
         expenses = updatedExpenses
+        settlementEntries = updatedSettlementEntries
         preferences.edit()
             .putString(KEY_GROUP_NAME, updatedGroupName)
             .putString(KEY_PEOPLE, encodePeople(updatedPeople))
             .putString(KEY_EXPENSES, encodeExpenses(updatedExpenses))
+            .putString(KEY_SETTLEMENT_ENTRIES, encodeSettlementEntries(updatedSettlementEntries))
             .apply()
     }
 
@@ -159,6 +181,12 @@ private fun SplitterApp(preferences: SharedPreferences) {
         }
         selectedParticipantIds = selectedParticipantIds.filter { it in ids }.toMutableSet().ifEmpty { ids.toSet() }
         customShareInputs = ids.associateWith { customShareInputs[it] ?: "" }
+        if (settleFromPersonId !in ids) {
+            settleFromPersonId = ids.firstOrNull().orEmpty()
+        }
+        if (settleToPersonId !in ids || settleToPersonId == settleFromPersonId) {
+            settleToPersonId = ids.firstOrNull { it != settleFromPersonId } ?: ids.firstOrNull().orEmpty()
+        }
     }
 
     fun updatePeople(updatedPeople: List<Person>) {
@@ -179,7 +207,8 @@ private fun SplitterApp(preferences: SharedPreferences) {
         }
         val updatedPeople = people.filterNot { it.id == personId }
         val updatedExpenses = expenses.filterNot { it.paidByPersonId == personId || personId in it.participantIds }
-        persistCore(updatedPeople = updatedPeople, updatedExpenses = updatedExpenses)
+        val updatedSettlementEntries = settlementEntries.filterNot { it.fromPersonId == personId || it.toPersonId == personId }
+        persistCore(updatedPeople = updatedPeople, updatedExpenses = updatedExpenses, updatedSettlementEntries = updatedSettlementEntries)
         syncDraftState(updatedPeople)
     }
 
@@ -274,7 +303,30 @@ private fun SplitterApp(preferences: SharedPreferences) {
         Toast.makeText(context, if (existingExpenseId == null) "Expense added." else "Expense updated.", Toast.LENGTH_SHORT).show()
     }
 
-    val balances = remember(people, expenses) { computeBalances(people, expenses) }
+    fun addSettlementEntry() {
+        val amountCents = parseMoneyToCents(settleAmountInput)
+        if (amountCents <= 0L) {
+            Toast.makeText(context, "Enter a valid settle-up amount.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (settleFromPersonId.isBlank() || settleToPersonId.isBlank() || settleFromPersonId == settleToPersonId) {
+            Toast.makeText(context, "Choose two different people for the settle-up.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val entry = SettlementEntry(
+            id = UUID.randomUUID().toString(),
+            fromPersonId = settleFromPersonId,
+            toPersonId = settleToPersonId,
+            amountCents = amountCents,
+            note = settleNoteInput.trim()
+        )
+        persistCore(updatedSettlementEntries = settlementEntries + entry)
+        settleAmountInput = ""
+        settleNoteInput = ""
+        Toast.makeText(context, "Settle-up added.", Toast.LENGTH_SHORT).show()
+    }
+
+    val balances = remember(people, expenses, settlementEntries) { computeBalances(people, expenses, settlementEntries) }
     val settlements = remember(people, balances) { computeSettlements(balances) }
     val totalDraftAmountCents = parseMoneyToCents(amountInput)
     val customShareDeltaCents = if (splitMode == SplitMode.CUSTOM) {
@@ -352,6 +404,28 @@ private fun SplitterApp(preferences: SharedPreferences) {
         )
 
         BalancesPanel(people = people, balances = balances, settlements = settlements)
+
+        SettleUpPanel(
+            people = people,
+            fromPersonId = settleFromPersonId,
+            toPersonId = settleToPersonId,
+            amountInput = settleAmountInput,
+            noteInput = settleNoteInput,
+            onFromPersonChange = { settleFromPersonId = it },
+            onToPersonChange = { settleToPersonId = it },
+            onAmountChange = { settleAmountInput = sanitizeMoneyInput(it) },
+            onNoteChange = { settleNoteInput = sanitizeNoteInput(it) },
+            onAddSettleUp = ::addSettlementEntry
+        )
+
+        RecordedSettleUpsPanel(
+            people = people,
+            settlementEntries = settlementEntries,
+            onDeleteSettlementEntry = { entryId ->
+                persistCore(updatedSettlementEntries = settlementEntries.filterNot { it.id == entryId })
+                Toast.makeText(context, "Settle-up removed.", Toast.LENGTH_SHORT).show()
+            }
+        )
 
         ExpensesPanel(
             people = people,
@@ -621,6 +695,91 @@ private fun BalancesPanel(
 }
 
 @Composable
+private fun SettleUpPanel(
+    people: List<Person>,
+    fromPersonId: String,
+    toPersonId: String,
+    amountInput: String,
+    noteInput: String,
+    onFromPersonChange: (String) -> Unit,
+    onToPersonChange: (String) -> Unit,
+    onAmountChange: (String) -> Unit,
+    onNoteChange: (String) -> Unit,
+    onAddSettleUp: () -> Unit
+) {
+    PixelPanel {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(text = "ADD SETTLE-UP", style = labelStyle(), color = SplitterPalette.Highlight)
+            Text(
+                text = "Record a real payment between two people, even if it is not the exact suggested amount.",
+                style = metaStyle(),
+                color = SplitterPalette.Subtle
+            )
+
+            Text(text = "WHO PAID", style = labelStyle(), color = SplitterPalette.Highlight)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                people.forEach { person ->
+                    ToggleRowButton(
+                        text = person.name.ifBlank { "Unnamed" },
+                        selected = person.id == fromPersonId,
+                        onClick = { onFromPersonChange(person.id) }
+                    )
+                }
+            }
+
+            Text(text = "WHO RECEIVED", style = labelStyle(), color = SplitterPalette.Highlight)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                people.forEach { person ->
+                    ToggleRowButton(
+                        text = person.name.ifBlank { "Unnamed" },
+                        selected = person.id == toPersonId,
+                        onClick = { onToPersonChange(person.id) }
+                    )
+                }
+            }
+
+            StyledTextField(value = amountInput, placeholder = "0", suffix = "kr", onValueChange = onAmountChange)
+            StyledTextField(value = noteInput, placeholder = "Optional note", onValueChange = onNoteChange)
+            PrimaryButton(text = "Add settle-up", onClick = onAddSettleUp, accent = SplitterPalette.Highlight)
+        }
+    }
+}
+
+@Composable
+private fun RecordedSettleUpsPanel(
+    people: List<Person>,
+    settlementEntries: List<SettlementEntry>,
+    onDeleteSettlementEntry: (String) -> Unit
+) {
+    PixelPanel {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(text = "RECORDED SETTLE-UPS", style = labelStyle(), color = SplitterPalette.Highlight)
+            if (settlementEntries.isEmpty()) {
+                Text(text = "No settle-ups recorded yet.", style = bodyStyle(), color = SplitterPalette.Subtle)
+            } else {
+                settlementEntries.asReversed().forEach { entry ->
+                    val fromName = people.firstOrNull { it.id == entry.fromPersonId }?.name.orEmpty().ifBlank { "Someone" }
+                    val toName = people.firstOrNull { it.id == entry.toPersonId }?.name.orEmpty().ifBlank { "Someone" }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, SplitterPalette.Border, RoundedCornerShape(8.dp))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(text = "$fromName paid $toName ${formatMoney(entry.amountCents)}", style = bodyStyle(), color = SplitterPalette.Text)
+                        if (entry.note.isNotBlank()) {
+                            Text(text = entry.note, style = metaStyle(), color = SplitterPalette.Subtle)
+                        }
+                        SmallButton(text = "Delete", accent = SplitterPalette.Danger, onClick = { onDeleteSettlementEntry(entry.id) })
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ExpensesPanel(
     people: List<Person>,
     expenses: List<Expense>,
@@ -765,11 +924,12 @@ private fun PrimaryButton(text: String, onClick: () -> Unit, accent: Color = Spl
         modifier = Modifier.fillMaxWidth(),
         colors = ButtonDefaults.buttonColors(
             containerColor = accent,
-            contentColor = SplitterPalette.Background,
+            contentColor = buttonContentColor(accent),
             disabledContainerColor = SplitterPalette.PanelAlt,
             disabledContentColor = SplitterPalette.Subtle
         ),
-        shape = RoundedCornerShape(8.dp)
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(2.dp, buttonBorderColor(accent))
     ) {
         Text(text = text, style = bodyStyle(), modifier = Modifier.padding(vertical = 4.dp), textAlign = TextAlign.Center)
     }
@@ -779,8 +939,9 @@ private fun PrimaryButton(text: String, onClick: () -> Unit, accent: Color = Spl
 private fun SmallButton(text: String, accent: Color, onClick: () -> Unit) {
     Button(
         onClick = onClick,
-        colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = SplitterPalette.Background),
-        shape = RoundedCornerShape(8.dp)
+        colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = buttonContentColor(accent)),
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(2.dp, buttonBorderColor(accent))
     ) {
         Text(text = text, style = metaStyle())
     }
@@ -792,9 +953,10 @@ private fun ToggleChip(text: String, selected: Boolean, onClick: () -> Unit) {
         onClick = onClick,
         colors = ButtonDefaults.buttonColors(
             containerColor = if (selected) SplitterPalette.Highlight else SplitterPalette.PanelAlt,
-            contentColor = if (selected) SplitterPalette.Background else SplitterPalette.Text
+            contentColor = if (selected) buttonContentColor(SplitterPalette.Highlight) else SplitterPalette.Text
         ),
-        shape = RoundedCornerShape(8.dp)
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(2.dp, if (selected) SplitterPalette.Highlight else SplitterPalette.InputBorder)
     ) {
         Text(text = text, style = metaStyle())
     }
@@ -806,13 +968,22 @@ private fun ToggleRowButton(text: String, selected: Boolean, onClick: () -> Unit
         onClick = onClick,
         colors = ButtonDefaults.buttonColors(
             containerColor = if (selected) SplitterPalette.Accent else SplitterPalette.PanelAlt,
-            contentColor = if (selected) SplitterPalette.Background else SplitterPalette.Text
+            contentColor = if (selected) buttonContentColor(SplitterPalette.Accent) else SplitterPalette.Text
         ),
         shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth(),
+        border = BorderStroke(2.dp, if (selected) SplitterPalette.Accent else SplitterPalette.InputBorder)
     ) {
         Text(text = text, style = bodyStyle())
     }
+}
+
+private fun buttonContentColor(accent: Color): Color {
+    return if (accent.luminance() > 0.42f) SplitterPalette.Background else SplitterPalette.Text
+}
+
+private fun buttonBorderColor(accent: Color): Color {
+    return if (accent.luminance() > 0.42f) SplitterPalette.Background.copy(alpha = 0.55f) else SplitterPalette.Highlight
 }
 
 @Composable
@@ -834,7 +1005,7 @@ private fun PixelPanel(content: @Composable () -> Unit) {
     }
 }
 
-private fun computeBalances(people: List<Person>, expenses: List<Expense>): Map<String, Long> {
+private fun computeBalances(people: List<Person>, expenses: List<Expense>, settlementEntries: List<SettlementEntry>): Map<String, Long> {
     val balances = people.associate { it.id to 0L }.toMutableMap()
     expenses.forEach { expense ->
         if (expense.paidByPersonId !in balances) return@forEach
@@ -847,6 +1018,14 @@ private fun computeBalances(people: List<Person>, expenses: List<Expense>): Map<
             if (personId in balances) {
                 balances[personId] = (balances[personId] ?: 0L) - shareCents
             }
+        }
+    }
+    settlementEntries.forEach { entry ->
+        if (entry.fromPersonId in balances) {
+            balances[entry.fromPersonId] = (balances[entry.fromPersonId] ?: 0L) + entry.amountCents
+        }
+        if (entry.toPersonId in balances) {
+            balances[entry.toPersonId] = (balances[entry.toPersonId] ?: 0L) - entry.amountCents
         }
     }
     return balances
@@ -904,6 +1083,8 @@ private fun loadPeople(preferences: SharedPreferences): List<Person> {
 }
 
 private fun loadExpenses(preferences: SharedPreferences): List<Expense> = parseExpenses(preferences.getString(KEY_EXPENSES, null))
+
+private fun loadSettlementEntries(preferences: SharedPreferences): List<SettlementEntry> = parseSettlementEntries(preferences.getString(KEY_SETTLEMENT_ENTRIES, null))
 
 private fun parsePeople(raw: String?): List<Person> {
     if (raw.isNullOrBlank()) return emptyList()
@@ -977,6 +1158,42 @@ private fun encodeExpenses(expenses: List<Expense>): String {
                 .put("participantIds", JSONArray(expense.participantIds))
                 .put("customSharesCents", customShares)
                 .put("note", expense.note)
+        )
+    }
+    return array.toString()
+}
+
+private fun parseSettlementEntries(raw: String?): List<SettlementEntry> {
+    if (raw.isNullOrBlank()) return emptyList()
+    return runCatching {
+        val array = JSONArray(raw)
+        buildList {
+            for (i in 0 until array.length()) {
+                val item = array.getJSONObject(i)
+                add(
+                    SettlementEntry(
+                        id = item.getString("id"),
+                        fromPersonId = item.optString("fromPersonId", ""),
+                        toPersonId = item.optString("toPersonId", ""),
+                        amountCents = item.optLong("amountCents", 0L),
+                        note = item.optString("note", "")
+                    )
+                )
+            }
+        }
+    }.getOrDefault(emptyList())
+}
+
+private fun encodeSettlementEntries(entries: List<SettlementEntry>): String {
+    val array = JSONArray()
+    entries.forEach { entry ->
+        array.put(
+            JSONObject()
+                .put("id", entry.id)
+                .put("fromPersonId", entry.fromPersonId)
+                .put("toPersonId", entry.toPersonId)
+                .put("amountCents", entry.amountCents)
+                .put("note", entry.note)
         )
     }
     return array.toString()
