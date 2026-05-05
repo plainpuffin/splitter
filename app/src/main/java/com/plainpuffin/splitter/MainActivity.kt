@@ -527,6 +527,13 @@ private fun SplitEventScreen(
             }
         )
 
+        PeoplePanel(
+            people = people,
+            onNameChange = ::updatePersonName,
+            onAddPerson = ::addPerson,
+            onRemovePerson = ::removePerson
+        )
+
         SummaryPanel(
             peopleCount = people.size,
             expenseCount = expenses.size,
@@ -545,13 +552,6 @@ private fun SplitEventScreen(
             },
             onCancelEditing = ::clearDraft,
             onSaveAndExit = onBackToMenu
-        )
-
-        PeoplePanel(
-            people = people,
-            onNameChange = ::updatePersonName,
-            onAddPerson = ::addPerson,
-            onRemovePerson = ::removePerson
         )
 
         AddExpensePanel(
