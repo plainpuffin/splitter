@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -34,7 +33,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -50,7 +48,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -526,14 +523,27 @@ private fun SplitEventScreen(
             onProjectNameChange = {
                 val sanitized = sanitizeTitleInput(it).ifBlank { "Untitled event" }
                 persistCore(updatedGroupName = sanitized)
-            },
-            onBackToMenu = onBackToMenu
+            }
         )
 
         SummaryPanel(
             peopleCount = people.size,
             expenseCount = expenses.size,
             totalCents = expenses.sumOf { it.amountCents }
+        )
+
+        BalancesPanel(people = people, balances = balances, settlements = settlements)
+
+        ActionPanel(
+            hasSettlements = settlements.isNotEmpty(),
+            isEditing = editingExpenseId != null,
+            onCopySettlementSummary = {
+                val clipboard = context.getSystemService(ClipboardManager::class.java)
+                clipboard?.setPrimaryClip(ClipData.newPlainText("Splitter settle-up", settlementSummary))
+                Toast.makeText(context, "Settle-up summary copied.", Toast.LENGTH_SHORT).show()
+            },
+            onCancelEditing = ::clearDraft,
+            onSaveAndExit = onBackToMenu
         )
 
         PeoplePanel(
@@ -586,17 +596,6 @@ private fun SplitEventScreen(
             onAddSettleUp = ::addSettlementEntry
         )
 
-        BalancesPanel(people = people, balances = balances, settlements = settlements)
-
-        RecordedSettleUpsPanel(
-            people = people,
-            settlementEntries = settlementEntries,
-            onDeleteSettlementEntry = { entryId ->
-                persistCore(updatedSettlementEntries = settlementEntries.filterNot { it.id == entryId })
-                Toast.makeText(context, "Settle-up removed.", Toast.LENGTH_SHORT).show()
-            }
-        )
-
         ExpensesPanel(
             people = people,
             expenses = expenses,
@@ -610,16 +609,13 @@ private fun SplitEventScreen(
             }
         )
 
-        ActionPanel(
-            hasSettlements = settlements.isNotEmpty(),
-            isEditing = editingExpenseId != null,
-            onCopySettlementSummary = {
-                val clipboard = context.getSystemService(ClipboardManager::class.java)
-                clipboard?.setPrimaryClip(ClipData.newPlainText("Splitter settle-up", settlementSummary))
-                Toast.makeText(context, "Settle-up summary copied.", Toast.LENGTH_SHORT).show()
-            },
-            onCancelEditing = ::clearDraft,
-            onSaveAndExit = onBackToMenu
+        RecordedSettleUpsPanel(
+            people = people,
+            settlementEntries = settlementEntries,
+            onDeleteSettlementEntry = { entryId ->
+                persistCore(updatedSettlementEntries = settlementEntries.filterNot { it.id == entryId })
+                Toast.makeText(context, "Settle-up removed.", Toast.LENGTH_SHORT).show()
+            }
         )
     }
 }
@@ -627,46 +623,16 @@ private fun SplitEventScreen(
 @Composable
 private fun ProjectNamePanel(
     projectName: String,
-    onProjectNameChange: (String) -> Unit,
-    onBackToMenu: () -> Unit
+    onProjectNameChange: (String) -> Unit
 ) {
-    val headerHeight = 102.dp
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(headerHeight),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.Top
-    ) {
-        SquareNavPanel(onClick = onBackToMenu, size = headerHeight)
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .height(headerHeight)
-        ) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = SplitterPalette.Panel),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.fillMaxSize()
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .border(2.dp, SplitterPalette.Border, RoundedCornerShape(10.dp))
-                        .background(SplitterPalette.Panel)
-                        .padding(16.dp)
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(text = "EVENT", style = labelStyle(), color = SplitterPalette.Highlight)
-                        StyledTextField(
-                            value = projectName,
-                            placeholder = "Event name",
-                            onValueChange = onProjectNameChange
-                        )
-                    }
-                }
-            }
+    PixelPanel {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(text = "EVENT", style = labelStyle(), color = SplitterPalette.Highlight)
+            StyledTextField(
+                value = projectName,
+                placeholder = "Event name",
+                onValueChange = onProjectNameChange
+            )
         }
     }
 }
@@ -831,34 +797,6 @@ private fun AddExpensePanel(
 }
 
 @Composable
-private fun SquareNavPanel(onClick: () -> Unit, size: androidx.compose.ui.unit.Dp) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = SplitterPalette.Panel),
-        shape = RoundedCornerShape(10.dp),
-        modifier = Modifier.size(size)
-    ) {
-        Button(
-            onClick = onClick,
-            modifier = Modifier
-                .fillMaxSize()
-                .border(2.dp, SplitterPalette.Border, RoundedCornerShape(10.dp)),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = SplitterPalette.Panel,
-                contentColor = SplitterPalette.Text
-            ),
-            shape = RoundedCornerShape(10.dp)
-        ) {
-            Icon(
-                painter = painterResource(id = R.drawable.ic_back_arrow),
-                contentDescription = "Back",
-                tint = SplitterPalette.Text,
-                modifier = Modifier.size(30.dp)
-            )
-        }
-    }
-}
-
-@Composable
 private fun BalancesPanel(
     people: List<Person>,
     balances: Map<String, Long>,
@@ -971,7 +909,7 @@ private fun RecordedSettleUpsPanel(
 ) {
     PixelPanel {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(text = "RECORDED SETTLE-UPS", style = labelStyle(), color = SplitterPalette.Highlight)
+            Text(text = "SETTLE-UPS", style = labelStyle(), color = SplitterPalette.Highlight)
             if (settlementEntries.isEmpty()) {
                 Text(text = "No settle-ups recorded yet.", style = bodyStyle(), color = SplitterPalette.Subtle)
             } else {
@@ -1171,7 +1109,7 @@ private fun ToggleChip(text: String, selected: Boolean, onClick: () -> Unit) {
             contentColor = if (selected) buttonContentColor(SplitterPalette.Highlight) else SplitterPalette.Text
         ),
         shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(2.dp, if (selected) SplitterPalette.Highlight else SplitterPalette.InputBorder)
+        border = BorderStroke(2.dp, SplitterPalette.InputBorder)
     ) {
         Text(text = text, style = metaStyle())
     }
@@ -1187,7 +1125,7 @@ private fun ToggleRowButton(text: String, selected: Boolean, onClick: () -> Unit
         ),
         shape = RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth(),
-        border = BorderStroke(2.dp, if (selected) SplitterPalette.Accent else SplitterPalette.InputBorder)
+        border = BorderStroke(2.dp, SplitterPalette.InputBorder)
     ) {
         Text(text = text, style = bodyStyle())
     }
@@ -1198,7 +1136,7 @@ private fun buttonContentColor(accent: Color): Color {
 }
 
 private fun buttonBorderColor(accent: Color): Color {
-    return if (accent.luminance() > 0.42f) SplitterPalette.Background.copy(alpha = 0.55f) else SplitterPalette.Highlight
+    return SplitterPalette.InputBorder
 }
 
 @Composable
