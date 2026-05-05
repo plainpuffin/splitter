@@ -522,7 +522,7 @@ private fun SplitEventScreen(
         ProjectNamePanel(
             projectName = groupName,
             onProjectNameChange = {
-                val sanitized = sanitizeTitleInput(it).ifBlank { "Untitled project" }
+                val sanitized = sanitizeTitleInput(it).ifBlank { "Untitled event" }
                 persistCore(updatedGroupName = sanitized)
             },
             onBackToMenu = onBackToMenu
@@ -566,20 +566,25 @@ private fun SplitEventScreen(
             onCancelEditing = ::clearDraft
         )
 
-        BalancesPanel(people = people, balances = balances, settlements = settlements)
-
         SettleUpPanel(
             people = people,
             fromPersonId = settleFromPersonId,
             toPersonId = settleToPersonId,
             amountInput = settleAmountInput,
             noteInput = settleNoteInput,
-            onFromPersonChange = { settleFromPersonId = it },
+            onFromPersonChange = {
+                settleFromPersonId = it
+                if (settleToPersonId == it) {
+                    settleToPersonId = people.firstOrNull { person -> person.id != it }?.id.orEmpty()
+                }
+            },
             onToPersonChange = { settleToPersonId = it },
             onAmountChange = { settleAmountInput = sanitizeMoneyInput(it) },
             onNoteChange = { settleNoteInput = sanitizeNoteInput(it) },
             onAddSettleUp = ::addSettlementEntry
         )
+
+        BalancesPanel(people = people, balances = balances, settlements = settlements)
 
         RecordedSettleUpsPanel(
             people = people,
@@ -604,7 +609,6 @@ private fun SplitEventScreen(
         )
 
         ActionPanel(
-            hasExpenses = expenses.isNotEmpty(),
             hasSettlements = settlements.isNotEmpty(),
             isEditing = editingExpenseId != null,
             onCopySettlementSummary = {
@@ -613,11 +617,7 @@ private fun SplitEventScreen(
                 Toast.makeText(context, "Settle-up summary copied.", Toast.LENGTH_SHORT).show()
             },
             onCancelEditing = ::clearDraft,
-            onClearExpenses = {
-                persistCore(updatedExpenses = emptyList())
-                clearDraft()
-                Toast.makeText(context, "All expenses cleared.", Toast.LENGTH_SHORT).show()
-            }
+            onSaveAndExit = onBackToMenu
         )
     }
 }
@@ -628,15 +628,23 @@ private fun ProjectNamePanel(
     onProjectNameChange: (String) -> Unit,
     onBackToMenu: () -> Unit
 ) {
-    PixelPanel {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SmallButton(text = "Back to menu", accent = SplitterPalette.PanelAlt, onClick = onBackToMenu)
-            Text(text = "EVENT", style = labelStyle(), color = SplitterPalette.Highlight)
-            StyledTextField(
-                value = projectName,
-                placeholder = "Event name",
-                onValueChange = onProjectNameChange
-            )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        SquareNavPanel(onClick = onBackToMenu)
+        Box(modifier = Modifier.weight(1f)) {
+            PixelPanel {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(text = "EVENT", style = labelStyle(), color = SplitterPalette.Highlight)
+                    StyledTextField(
+                        value = projectName,
+                        placeholder = "Event name",
+                        onValueChange = onProjectNameChange
+                    )
+                }
+            }
         }
     }
 }
@@ -801,6 +809,30 @@ private fun AddExpensePanel(
 }
 
 @Composable
+@Composable
+private fun SquareNavPanel(onClick: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = SplitterPalette.Panel),
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.size(88.dp)
+    ) {
+        Button(
+            onClick = onClick,
+            modifier = Modifier
+                .fillMaxSize()
+                .border(2.dp, SplitterPalette.Border, RoundedCornerShape(10.dp)),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = SplitterPalette.Panel,
+                contentColor = SplitterPalette.Text
+            ),
+            shape = RoundedCornerShape(10.dp)
+        ) {
+            Text(text = "←", style = titleStyle(), textAlign = TextAlign.Center)
+        }
+    }
+}
+
+@Composable
 private fun BalancesPanel(
     people: List<Person>,
     balances: Map<String, Long>,
@@ -865,6 +897,8 @@ private fun SettleUpPanel(
     onNoteChange: (String) -> Unit,
     onAddSettleUp: () -> Unit
 ) {
+    val receiveCandidates = people.filter { it.id != fromPersonId }
+
     PixelPanel {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(text = "ADD SETTLE-UP", style = labelStyle(), color = SplitterPalette.Highlight)
@@ -887,7 +921,7 @@ private fun SettleUpPanel(
 
             Text(text = "WHO RECEIVED", style = labelStyle(), color = SplitterPalette.Highlight)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                people.forEach { person ->
+                receiveCandidates.forEach { person ->
                     ToggleRowButton(
                         text = person.name.ifBlank { "Unnamed" },
                         selected = person.id == toPersonId,
@@ -990,12 +1024,11 @@ private fun ExpensesPanel(
 
 @Composable
 private fun ActionPanel(
-    hasExpenses: Boolean,
     hasSettlements: Boolean,
     isEditing: Boolean,
     onCopySettlementSummary: () -> Unit,
     onCancelEditing: () -> Unit,
-    onClearExpenses: () -> Unit
+    onSaveAndExit: () -> Unit
 ) {
     PixelPanel {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1014,10 +1047,9 @@ private fun ActionPanel(
                 )
             }
             PrimaryButton(
-                text = "Clear all expenses",
-                onClick = onClearExpenses,
-                accent = SplitterPalette.PanelAlt,
-                enabled = hasExpenses
+                text = "Save and exit",
+                onClick = onSaveAndExit,
+                accent = SplitterPalette.PanelAlt
             )
         }
     }
@@ -1258,7 +1290,7 @@ private fun parseEvents(raw: String?): List<SplitEvent> {
                 add(
                     SplitEvent(
                         id = item.optString("id", UUID.randomUUID().toString()),
-                        groupName = item.optString("groupName", "Untitled project"),
+                        groupName = item.optString("groupName", "Untitled event"),
                         people = parsePeople(item.optJSONArray("people")?.toString()).ifEmpty { defaultPeople() },
                         expenses = parseExpenses(item.optJSONArray("expenses")?.toString()),
                         settlementEntries = parseSettlementEntries(item.optJSONArray("settlementEntries")?.toString())
