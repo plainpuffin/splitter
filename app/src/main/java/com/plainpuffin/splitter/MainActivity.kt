@@ -7,6 +7,7 @@ import android.content.SharedPreferences
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
@@ -67,6 +68,7 @@ private const val KEY_GROUP_NAME = "group_name"
 private const val KEY_PEOPLE = "people"
 private const val KEY_EXPENSES = "expenses"
 private const val KEY_SETTLEMENT_ENTRIES = "settlement_entries"
+private const val KEY_PROJECTS = "projects"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -116,6 +118,14 @@ data class SettlementEntry(
     val note: String = ""
 )
 
+data class SplitProject(
+    val id: String,
+    val groupName: String,
+    val people: List<Person>,
+    val expenses: List<Expense>,
+    val settlementEntries: List<SettlementEntry>
+)
+
 private object SplitterPalette {
     val Background = Color(0xFF0B1020)
     val Panel = Color(0xFF121A2B)
@@ -137,25 +147,165 @@ private fun SplitterTheme(content: @Composable () -> Unit) {
 
 @Composable
 private fun SplitterApp(preferences: SharedPreferences) {
+    var projects by remember { mutableStateOf(loadProjects(preferences)) }
+    var currentProjectId by remember { mutableStateOf<String?>(null) }
+
+    fun persistProjects(updatedProjects: List<SplitProject>) {
+        projects = updatedProjects
+        preferences.edit()
+            .putString(KEY_PROJECTS, encodeProjects(updatedProjects))
+            .apply()
+    }
+
+    fun openProject(projectId: String) {
+        currentProjectId = projectId
+    }
+
+    fun createProject() {
+        val project = SplitProject(
+            id = UUID.randomUUID().toString(),
+            groupName = nextProjectName(projects),
+            people = defaultPeople(),
+            expenses = emptyList(),
+            settlementEntries = emptyList()
+        )
+        persistProjects(projects + project)
+        currentProjectId = project.id
+    }
+
+    fun updateProject(updatedProject: SplitProject) {
+        persistProjects(projects.map { project ->
+            if (project.id == updatedProject.id) updatedProject else project
+        })
+    }
+
+    val currentProject = projects.firstOrNull { it.id == currentProjectId }
+
+    if (currentProject == null) {
+        MainMenuScreen(
+            projects = projects,
+            onCreateProject = ::createProject,
+            onOpenProject = ::openProject
+        )
+    } else {
+        SplitProjectScreen(
+            project = currentProject,
+            onProjectChange = ::updateProject,
+            onBackToMenu = { currentProjectId = null }
+        )
+    }
+}
+
+@Composable
+private fun MainMenuScreen(
+    projects: List<SplitProject>,
+    onCreateProject: () -> Unit,
+    onOpenProject: (String) -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(SplitterPalette.Background)
+            .padding(16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            SplitterMarkIcon(modifier = Modifier.size(112.dp))
+            Text(text = "Splitter", style = titleStyle(), color = SplitterPalette.Text)
+            Text(
+                text = "Pick a saved project or start a new one",
+                style = bodyStyle(),
+                color = SplitterPalette.Subtle,
+                textAlign = TextAlign.Center
+            )
+
+            Box(modifier = Modifier.fillMaxWidth()) {
+                PrimaryButton(text = "New project", onClick = onCreateProject)
+            }
+
+            if (projects.isEmpty()) {
+                Text(
+                    text = "No saved projects yet.",
+                    style = metaStyle(),
+                    color = SplitterPalette.Subtle,
+                    textAlign = TextAlign.Center
+                )
+            } else {
+                projects.sortedBy { it.groupName.lowercase(Locale.getDefault()) }.forEach { project ->
+                    ProjectMenuButton(project = project, onClick = { onOpenProject(project.id) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProjectMenuButton(project: SplitProject, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = SplitterPalette.Panel,
+            contentColor = SplitterPalette.Text
+        ),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(2.dp, SplitterPalette.Border)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = project.groupName.ifBlank { "Untitled project" },
+                style = bodyStyle().copy(fontWeight = FontWeight.Bold),
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text = "${project.people.size} people • ${project.expenses.size} expenses • ${formatMoney(project.expenses.sumOf { it.amountCents })}",
+                style = metaStyle(),
+                color = SplitterPalette.Subtle,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
+private fun SplitProjectScreen(
+    project: SplitProject,
+    onProjectChange: (SplitProject) -> Unit,
+    onBackToMenu: () -> Unit
+) {
+    BackHandler(onBack = onBackToMenu)
+
     val context = androidx.compose.ui.platform.LocalContext.current
 
-    var groupName by remember { mutableStateOf(preferences.getString(KEY_GROUP_NAME, "Apartment group") ?: "Apartment group") }
-    var people by remember { mutableStateOf(loadPeople(preferences)) }
-    var expenses by remember { mutableStateOf(loadExpenses(preferences)) }
-    var settlementEntries by remember { mutableStateOf(loadSettlementEntries(preferences)) }
+    var groupName by remember(project.id) { mutableStateOf(project.groupName) }
+    var people by remember(project.id) { mutableStateOf(project.people.ifEmpty { defaultPeople() }) }
+    var expenses by remember(project.id) { mutableStateOf(project.expenses) }
+    var settlementEntries by remember(project.id) { mutableStateOf(project.settlementEntries) }
 
-    var expenseTitle by remember { mutableStateOf("") }
-    var amountInput by remember { mutableStateOf("") }
-    var noteInput by remember { mutableStateOf("") }
-    var splitMode by remember { mutableStateOf(SplitMode.EQUAL) }
-    var paidByPersonId by remember { mutableStateOf(people.firstOrNull()?.id.orEmpty()) }
-    var selectedParticipantIds by remember { mutableStateOf(people.map { it.id }.toSet()) }
-    var customShareInputs by remember { mutableStateOf(people.associate { it.id to "" }) }
-    var editingExpenseId by remember { mutableStateOf<String?>(null) }
-    var settleFromPersonId by remember { mutableStateOf(people.firstOrNull()?.id.orEmpty()) }
-    var settleToPersonId by remember { mutableStateOf(people.getOrNull(1)?.id ?: people.firstOrNull()?.id.orEmpty()) }
-    var settleAmountInput by remember { mutableStateOf("") }
-    var settleNoteInput by remember { mutableStateOf("") }
+    var expenseTitle by remember(project.id) { mutableStateOf("") }
+    var amountInput by remember(project.id) { mutableStateOf("") }
+    var noteInput by remember(project.id) { mutableStateOf("") }
+    var splitMode by remember(project.id) { mutableStateOf(SplitMode.EQUAL) }
+    var paidByPersonId by remember(project.id) { mutableStateOf(people.firstOrNull()?.id.orEmpty()) }
+    var selectedParticipantIds by remember(project.id) { mutableStateOf(people.map { it.id }.toSet()) }
+    var customShareInputs by remember(project.id) { mutableStateOf(people.associate { it.id to "" }) }
+    var editingExpenseId by remember(project.id) { mutableStateOf<String?>(null) }
+    var settleFromPersonId by remember(project.id) { mutableStateOf(people.firstOrNull()?.id.orEmpty()) }
+    var settleToPersonId by remember(project.id) { mutableStateOf(people.getOrNull(1)?.id ?: people.firstOrNull()?.id.orEmpty()) }
+    var settleAmountInput by remember(project.id) { mutableStateOf("") }
+    var settleNoteInput by remember(project.id) { mutableStateOf("") }
 
     fun persistCore(
         updatedGroupName: String = groupName,
@@ -167,12 +317,15 @@ private fun SplitterApp(preferences: SharedPreferences) {
         people = updatedPeople
         expenses = updatedExpenses
         settlementEntries = updatedSettlementEntries
-        preferences.edit()
-            .putString(KEY_GROUP_NAME, updatedGroupName)
-            .putString(KEY_PEOPLE, encodePeople(updatedPeople))
-            .putString(KEY_EXPENSES, encodeExpenses(updatedExpenses))
-            .putString(KEY_SETTLEMENT_ENTRIES, encodeSettlementEntries(updatedSettlementEntries))
-            .apply()
+        onProjectChange(
+            SplitProject(
+                id = project.id,
+                groupName = updatedGroupName,
+                people = updatedPeople,
+                expenses = updatedExpenses,
+                settlementEntries = updatedSettlementEntries
+            )
+        )
     }
 
     fun syncDraftState(updatedPeople: List<Person>) {
@@ -203,7 +356,7 @@ private fun SplitterApp(preferences: SharedPreferences) {
 
     fun removePerson(personId: String) {
         if (people.size <= 2) {
-            Toast.makeText(context, "Keep at least two people in the group.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Keep at least two people in the project.", Toast.LENGTH_SHORT).show()
             return
         }
         val updatedPeople = people.filterNot { it.id == personId }
@@ -361,10 +514,14 @@ private fun SplitterApp(preferences: SharedPreferences) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        HeaderPanel(groupName = groupName, onGroupNameChange = {
-            val sanitized = sanitizeTitleInput(it)
-            persistCore(updatedGroupName = sanitized.ifBlank { "Apartment group" })
-        })
+        ProjectNamePanel(
+            projectName = groupName,
+            onProjectNameChange = {
+                val sanitized = sanitizeTitleInput(it).ifBlank { "Untitled project" }
+                persistCore(updatedGroupName = sanitized)
+            },
+            onBackToMenu = onBackToMenu
+        )
 
         SummaryPanel(
             peopleCount = people.size,
@@ -461,24 +618,19 @@ private fun SplitterApp(preferences: SharedPreferences) {
 }
 
 @Composable
-private fun HeaderPanel(groupName: String, onGroupNameChange: (String) -> Unit) {
+private fun ProjectNamePanel(
+    projectName: String,
+    onProjectNameChange: (String) -> Unit,
+    onBackToMenu: () -> Unit
+) {
     PixelPanel {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                SplitterMarkIcon()
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(text = "Splitter", style = titleStyle(), color = SplitterPalette.Text)
-                    Text(text = "Local-first expense sharing", style = bodyStyle(), color = SplitterPalette.Subtle)
-                }
-            }
+            SmallButton(text = "Back to menu", accent = SplitterPalette.PanelAlt, onClick = onBackToMenu)
+            Text(text = "PROJECT", style = labelStyle(), color = SplitterPalette.Highlight)
             StyledTextField(
-                value = groupName,
-                placeholder = "Group name",
-                onValueChange = onGroupNameChange
+                value = projectName,
+                placeholder = "Project name",
+                onValueChange = onProjectNameChange
             )
         }
     }
@@ -870,7 +1022,6 @@ private fun ActionPanel(
 private fun SplitterMarkIcon(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .size(72.dp)
             .border(2.dp, SplitterPalette.Border, RoundedCornerShape(10.dp))
             .background(SplitterPalette.PanelAlt, RoundedCornerShape(10.dp))
             .padding(6.dp),
@@ -900,7 +1051,7 @@ private fun StyledTextField(
         textStyle = bodyStyle().copy(color = SplitterPalette.Text),
         placeholder = { Text(text = placeholder, style = bodyStyle(), color = SplitterPalette.Subtle) },
         trailingIcon = suffix?.let { { Text(text = it, style = metaStyle(), color = SplitterPalette.Subtle) } },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+        keyboardOptions = KeyboardOptions(keyboardType = if (suffix == null) KeyboardType.Text else KeyboardType.Decimal),
         shape = RoundedCornerShape(8.dp),
         colors = TextFieldDefaults.colors(
             focusedContainerColor = SplitterPalette.Background,
@@ -1070,17 +1221,68 @@ private fun computeSettlements(balances: Map<String, Long>): List<Settlement> {
     return settlements
 }
 
-private fun loadPeople(preferences: SharedPreferences): List<Person> {
+private fun loadProjects(preferences: SharedPreferences): List<SplitProject> {
+    val storedProjects = parseProjects(preferences.getString(KEY_PROJECTS, null))
+    if (storedProjects.isNotEmpty()) {
+        return storedProjects
+    }
+
+    val legacyGroupName = preferences.getString(KEY_GROUP_NAME, "Apartment group") ?: "Apartment group"
+    val legacyPeople = loadPeopleLegacy(preferences)
+    val legacyExpenses = loadExpenses(preferences)
+    val legacySettlementEntries = loadSettlementEntries(preferences)
+
+    return listOf(
+        SplitProject(
+            id = UUID.randomUUID().toString(),
+            groupName = legacyGroupName,
+            people = legacyPeople,
+            expenses = legacyExpenses,
+            settlementEntries = legacySettlementEntries
+        )
+    )
+}
+
+private fun parseProjects(raw: String?): List<SplitProject> {
+    if (raw.isNullOrBlank()) return emptyList()
+    return runCatching {
+        val array = JSONArray(raw)
+        buildList {
+            for (index in 0 until array.length()) {
+                val item = array.getJSONObject(index)
+                add(
+                    SplitProject(
+                        id = item.optString("id", UUID.randomUUID().toString()),
+                        groupName = item.optString("groupName", "Untitled project"),
+                        people = parsePeople(item.optJSONArray("people")?.toString()).ifEmpty { defaultPeople() },
+                        expenses = parseExpenses(item.optJSONArray("expenses")?.toString()),
+                        settlementEntries = parseSettlementEntries(item.optJSONArray("settlementEntries")?.toString())
+                    )
+                )
+            }
+        }
+    }.getOrDefault(emptyList())
+}
+
+private fun encodeProjects(projects: List<SplitProject>): String {
+    val array = JSONArray()
+    projects.forEach { project ->
+        array.put(
+            JSONObject()
+                .put("id", project.id)
+                .put("groupName", project.groupName)
+                .put("people", JSONArray(encodePeople(project.people)))
+                .put("expenses", JSONArray(encodeExpenses(project.expenses)))
+                .put("settlementEntries", JSONArray(encodeSettlementEntries(project.settlementEntries)))
+        )
+    }
+    return array.toString()
+}
+
+private fun loadPeopleLegacy(preferences: SharedPreferences): List<Person> {
     val stored = preferences.getString(KEY_PEOPLE, null)
     val parsed = parsePeople(stored)
-    return if (parsed.isEmpty()) {
-        listOf(
-            Person(UUID.randomUUID().toString(), "You"),
-            Person(UUID.randomUUID().toString(), "Friend")
-        )
-    } else {
-        parsed
-    }
+    return if (parsed.isEmpty()) defaultPeople() else parsed
 }
 
 private fun loadExpenses(preferences: SharedPreferences): List<Expense> = parseExpenses(preferences.getString(KEY_EXPENSES, null))
@@ -1129,8 +1331,8 @@ private fun parseExpenses(raw: String?): List<Expense> {
                         paidByPersonId = item.optString("paidByPersonId", ""),
                         splitMode = SplitMode.valueOf(item.optString("splitMode", SplitMode.EQUAL.name)),
                         participantIds = buildList {
-                            for (index in 0 until participantsArray.length()) {
-                                add(participantsArray.getString(index))
+                            for (participantIndex in 0 until participantsArray.length()) {
+                                add(participantsArray.getString(participantIndex))
                             }
                         },
                         customSharesCents = customShares,
@@ -1198,6 +1400,21 @@ private fun encodeSettlementEntries(entries: List<SettlementEntry>): String {
         )
     }
     return array.toString()
+}
+
+private fun defaultPeople(): List<Person> {
+    return listOf(
+        Person(UUID.randomUUID().toString(), "You"),
+        Person(UUID.randomUUID().toString(), "Friend")
+    )
+}
+
+private fun nextProjectName(projects: List<SplitProject>): String {
+    var index = 1
+    while (projects.any { it.groupName.equals("Project $index", ignoreCase = true) }) {
+        index++
+    }
+    return "Project $index"
 }
 
 private fun parseMoneyToCents(input: String): Long {
