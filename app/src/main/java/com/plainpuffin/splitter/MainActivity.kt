@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,6 +34,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -628,21 +630,41 @@ private fun ProjectNamePanel(
     onProjectNameChange: (String) -> Unit,
     onBackToMenu: () -> Unit
 ) {
+    val headerHeight = 102.dp
+
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(headerHeight),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.Top
     ) {
-        SquareNavPanel(onClick = onBackToMenu)
-        Box(modifier = Modifier.weight(1f)) {
-            PixelPanel {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text = "EVENT", style = labelStyle(), color = SplitterPalette.Highlight)
-                    StyledTextField(
-                        value = projectName,
-                        placeholder = "Event name",
-                        onValueChange = onProjectNameChange
-                    )
+        SquareNavPanel(onClick = onBackToMenu, size = headerHeight)
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(headerHeight)
+        ) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = SplitterPalette.Panel),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .border(2.dp, SplitterPalette.Border, RoundedCornerShape(10.dp))
+                        .background(SplitterPalette.Panel)
+                        .padding(16.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(text = "EVENT", style = labelStyle(), color = SplitterPalette.Highlight)
+                        StyledTextField(
+                            value = projectName,
+                            placeholder = "Event name",
+                            onValueChange = onProjectNameChange
+                        )
+                    }
                 }
             }
         }
@@ -809,11 +831,11 @@ private fun AddExpensePanel(
 }
 
 @Composable
-private fun SquareNavPanel(onClick: () -> Unit) {
+private fun SquareNavPanel(onClick: () -> Unit, size: androidx.compose.ui.unit.Dp) {
     Card(
         colors = CardDefaults.cardColors(containerColor = SplitterPalette.Panel),
         shape = RoundedCornerShape(10.dp),
-        modifier = Modifier.size(88.dp)
+        modifier = Modifier.size(size)
     ) {
         Button(
             onClick = onClick,
@@ -826,7 +848,12 @@ private fun SquareNavPanel(onClick: () -> Unit) {
             ),
             shape = RoundedCornerShape(10.dp)
         ) {
-            Text(text = "←", style = titleStyle(), textAlign = TextAlign.Center)
+            Icon(
+                painter = painterResource(id = R.drawable.ic_back_arrow),
+                contentDescription = "Back",
+                tint = SplitterPalette.Text,
+                modifier = Modifier.size(30.dp)
+            )
         }
     }
 }
