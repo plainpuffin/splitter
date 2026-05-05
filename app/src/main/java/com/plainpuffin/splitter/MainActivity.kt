@@ -809,7 +809,6 @@ private fun AddExpensePanel(
 }
 
 @Composable
-@Composable
 private fun SquareNavPanel(onClick: () -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = SplitterPalette.Panel),
